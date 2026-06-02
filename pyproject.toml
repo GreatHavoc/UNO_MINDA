@@ -18,4 +18,5 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
     "python-dotenv>=1.0.1",
     "cachetools>=5.5.0",
+    "googlenewsdecoder>=0.1.7",
 ]

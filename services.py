@@ -1,15 +1,18 @@
 """
 services.py
 ===========
-Data-fetching services: web scraping (DuckDuckGo) and stock data (yfinance).
-All functions return plain Python dicts/lists — no terminal output.
+Data-fetching services: news via Google News RSS (with parallel article fetching)
+and live stock data via yfinance. All functions return plain Python dicts/lists.
 """
 
 import urllib.parse
 import logging
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from bs4 import BeautifulSoup
+from googlenewsdecoder import new_decoderv1
 
 logger = logging.getLogger(__name__)
 
@@ -33,45 +36,43 @@ _DEFAULT_HEADERS = {
 
 def search_news_direct(topic: str, num: int = 10) -> list[dict]:
     """
-    Search for news using DuckDuckGo HTML (no API key needed).
-    Returns a list of article dicts with direct URLs.
+    Search for news using Google News RSS.
+    Returns a list of article dicts with Google News redirect links.
     """
     results: list[dict] = []
     try:
-        query = f"{topic} latest news"
-        url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
+        query = urllib.parse.quote(topic)
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         resp = requests.get(url, headers=_DEFAULT_HEADERS, timeout=15)
         resp.raise_for_status()
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for r in soup.find_all("div", class_="result", limit=num):
-            title_tag = r.find("a", class_="result__a")
-            snippet_tag = r.find("a", class_="result__snippet")
-            if not title_tag:
-                continue
+        root = ET.fromstring(resp.content)
+        items = root.findall(".//item")
+        for item in items[:num]:
+            title_el = item.find("title")
+            link_el = item.find("link")
+            pub_date_el = item.find("pubDate")
+            source_el = item.find("source")
 
-            ddg_url = title_tag.get("href", "")
-            actual_url = ddg_url
-            if "uddg=" in ddg_url:
-                parsed = urllib.parse.urlparse(ddg_url)
-                params = urllib.parse.parse_qs(parsed.query)
-                if "uddg" in params:
-                    actual_url = urllib.parse.unquote(params["uddg"][0])
+            title = title_el.text if title_el is not None else ""
+            link = link_el.text if link_el is not None else ""
+            pub_date = pub_date_el.text if pub_date_el is not None else ""
+            source = source_el.text if source_el is not None else ""
 
             results.append(
                 {
-                    "title": title_tag.get_text(strip=True),
-                    "url": actual_url,
-                    "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
-                    "source": "",
-                    "date": "",
+                    "title": title,
+                    "url": link,
+                    "snippet": "",
+                    "source": source,
+                    "date": pub_date,
                 }
             )
     except requests.exceptions.Timeout:
-        logger.warning("DuckDuckGo search timed out for topic: %s", topic)
+        logger.warning("Google News RSS search timed out for topic: %s", topic)
         results.append({"error": "Search timed out"})
-    except requests.exceptions.RequestException as exc:
-        logger.error("DuckDuckGo search failed for topic %s: %s", topic, exc)
+    except Exception as exc:
+        logger.error("Google News RSS search failed for topic %s: %s", topic, exc)
         results.append({"error": f"Search failed: {str(exc)}"})
     return results
 
@@ -169,34 +170,68 @@ def fetch_full_article(url: str, timeout: int = 12) -> str:
         return f"[Full article unavailable - error: {str(exc)[:80]}]"
 
 
-def fetch_news(topic: str, num: int = 10, fetch_articles: bool = False) -> list[dict]:
+def _fetch_single_article(item: dict, fetch_articles: bool) -> dict:
+    """Helper to resolve and scrape a single article from the Google News RSS item."""
+    article_url = item.get("url", "")
+    entry = {
+        "title": item.get("title", ""),
+        "url": article_url,
+        "date": item.get("date", ""),
+        "snippet": item.get("snippet", "")[:300],
+        "source": item.get("source", ""),
+    }
+
+    if fetch_articles and article_url:
+        try:
+            # We resolve the Google News redirect URL to get the target URL first
+            decoded = new_decoderv1(article_url, interval=0.1)
+            if decoded.get("status"):
+                real_url = decoded["decoded_url"]
+                entry["url"] = real_url
+                entry["full_article"] = fetch_full_article(real_url)
+            else:
+                entry["full_article"] = f"[Full article unavailable - could not decode URL: {decoded.get('message')}]"
+        except Exception as e:
+            logger.error("Failed to decode Google News URL %s: %s", article_url, e)
+            entry["full_article"] = f"[Full article unavailable - decode error: {str(e)}]"
+            
+    return entry
+
+
+def fetch_news(topic: str, num: int = 10, fetch_articles: bool = True) -> list[dict]:
     """
-    Fetch news for a topic. Optionally fetches full article content.
+    Fetch news for a topic. Optionally fetches full article content in parallel threads.
     Returns a list of article dicts.
     """
     raw = search_news_direct(topic, num)
-    results: list[dict] = []
+    
+    # Separate valid items from errors
+    valid_items = [item for item in raw if "error" not in item]
+    errors = [item for item in raw if "error" in item]
 
-    for item in raw:
-        if "error" in item:
-            results.append(item)
-            continue
+    # Fast path if we aren't fetching full articles or there are no valid items
+    if not fetch_articles or not valid_items:
+        results = []
+        for item in raw:
+            if "error" in item:
+                results.append(item)
+            else:
+                results.append({
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "date": item.get("date", ""),
+                    "snippet": item.get("snippet", "")[:300],
+                    "source": item.get("source", ""),
+                })
+        return results
 
-        article_url = item.get("url", "")
-        entry = {
-            "title": item.get("title", ""),
-            "url": article_url,
-            "date": item.get("date", ""),
-            "snippet": item.get("snippet", "")[:300],
-            "source": item.get("source", ""),
-        }
+    # Execute decoding and page fetching in parallel threads
+    max_workers = min(len(valid_items), 10)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_fetch_single_article, item, fetch_articles) for item in valid_items]
+        results = [future.result() for future in futures]
 
-        if fetch_articles and article_url:
-            entry["full_article"] = fetch_full_article(article_url)
-
-        results.append(entry)
-
-    return results
+    return errors + results
 
 
 # ---------------------------------------------------------------------------

@@ -85,7 +85,19 @@ Since the application is containerized, you can deploy it to any platform that s
 6. In the **Settings** tab, make sure the exposed port is set to `8000`.
 7. Railway will build and deploy the container automatically.
 
-### 3. AWS LightSail / ECS
+### 3. Koyeb
+Koyeb is a high-performance serverless platform to deploy Docker containers from GitHub.
+1. Sign up/log in to [Koyeb](https://www.koyeb.com).
+2. Click **Create Service** and select **GitHub** as the deployment method.
+3. Select your `UNO_MINDA` repository.
+4. In the **Builder** section, select **Dockerfile**.
+5. In the **Environment Variables** section, add:
+   - `API_KEY` (Generate a strong 32-character key)
+   - `ALLOWED_ORIGINS` (Set to `*` or your frontend domain)
+   - `DEBUG` (`false`)
+6. In the **Exposed Ports** section, set the port to `8000` (matching the Dockerfile container port) and set the protocol to `HTTP`.
+7. Select your desired region and click **Deploy**.
+### 4. AWS LightSail / ECS
 1. Push your Docker image to **Amazon ECR** (Elastic Container Registry) or **Docker Hub**:
    ```bash
    docker tag uno-minda-api:latest <your-account-id>.dkr.ecr.<region>.amazonaws.com/uno-minda-api:latest

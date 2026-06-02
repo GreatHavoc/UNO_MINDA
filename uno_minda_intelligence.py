@@ -665,42 +665,43 @@ def resolve_google_news_url(url, timeout=10):
 
 def search_news_direct(topic, num=10):
     """
-    Search for news using DuckDuckGo which gives direct article URLs.
-    Returns list of news article dicts with direct URLs.
+    Search for news using Google News RSS.
+    Returns list of news article dicts with Google News redirect URLs.
     """
     results = []
     try:
+        import urllib.parse
+        import xml.etree.ElementTree as ET
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         }
-        query = f"{topic} latest news"
-        url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
+        query = urllib.parse.quote(topic)
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for r in soup.find_all("div", class_="result", limit=num):
-            title_tag = r.find("a", class_="result__a")
-            snippet_tag = r.find("a", class_="result__snippet")
-            if title_tag:
-                ddg_url = title_tag.get("href", "")
-                # Extract actual URL from DuckDuckGo redirect
-                actual_url = ddg_url
-                if "uddg=" in ddg_url:
-                    import urllib.parse
-                    parsed = urllib.parse.urlparse(ddg_url)
-                    params = urllib.parse.parse_qs(parsed.query)
-                    if "uddg" in params:
-                        actual_url = urllib.parse.unquote(params["uddg"][0])
+        root = ET.fromstring(resp.content)
+        items = root.findall(".//item")
+        for item in items[:num]:
+            title_el = item.find("title")
+            link_el = item.find("link")
+            pub_date_el = item.find("pubDate")
+            source_el = item.find("source")
 
-                results.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": actual_url,
-                    "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
-                    "source": "",
-                    "date": "",
-                })
+            title = title_el.text if title_el is not None else ""
+            link = link_el.text if link_el is not None else ""
+            pub_date = pub_date_el.text if pub_date_el is not None else ""
+            source = source_el.text if source_el is not None else ""
+
+            results.append({
+                "title": title,
+                "url": link,
+                "snippet": "",
+                "source": source,
+                "date": pub_date,
+            })
     except Exception as e:
         results.append({"error": f"News search failed: {str(e)}"})
     return results
@@ -825,12 +826,11 @@ def _clean_article_text(text):
 
 def fetch_news_from_google(topic, num=10, fetch_articles=True):
     """
-    Fetch news articles for a topic using DuckDuckGo search (gives direct URLs).
-    Also fetches the full article content from each news URL.
+    Fetch news articles for a topic using Google News RSS.
+    Also decodes the Google News redirect URLs and fetches the full article content.
     """
     results = []
     try:
-        # Use DuckDuckGo for direct URLs (Google News RSS has redirect URLs)
         search_results = search_news_direct(topic, num)
         for item in search_results:
             if "error" in item:
@@ -851,7 +851,20 @@ def fetch_news_from_google(topic, num=10, fetch_articles=True):
             # Fetch the full article content
             if fetch_articles and article_url:
                 console.print(f"     [dim]Fetching full article: {article_data['title'][:60]}...[/dim]")
-                article_data["full_article"] = fetch_full_article(article_url)
+                try:
+                    from googlenewsdecoder import new_decoderv1
+                    decoded = new_decoderv1(article_url, interval=0.5)
+                    if decoded.get("status"):
+                        real_url = decoded["decoded_url"]
+                        article_data["url"] = real_url
+                        article_data["full_article"] = fetch_full_article(real_url)
+                    else:
+                        article_data["full_article"] = f"[Full article unavailable - could not decode URL: {decoded.get('message')}]"
+                except ImportError:
+                    # Fallback to fetching Google redirect URL directly (best effort)
+                    article_data["full_article"] = fetch_full_article(article_url)
+                except Exception as e:
+                    article_data["full_article"] = f"[Full article unavailable - decode error: {str(e)}]"
 
             results.append(article_data)
     except Exception as e:

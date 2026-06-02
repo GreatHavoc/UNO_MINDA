@@ -1,5 +1,8 @@
 # 🚀 Deploying UNO Minda API to PythonAnywhere
 
+> [!TIP]
+> If you are deploying to container-ready platforms like **Koyeb**, **Render**, **Railway**, or **AWS**, please refer to [DOCKER.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/DOCKER.md) instead for Docker-based deployment instructions.
+
 This guide walks you through deploying the UNO Minda FastAPI server to
 PythonAnywhere using their ASGI (uvicorn) hosting.
 

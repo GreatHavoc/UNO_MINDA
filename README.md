@@ -61,9 +61,9 @@ uv run uvicorn server:app --reload
 
 The API exposes a set of endpoints under `/api/v1` protected by an API key. 
 
-### Swagger Documentation
-Once running, interactive API documentation is available at:
-- **Swagger UI**: `http://localhost:8000/docs` (Use the **Authorize** button and input your `X-API-Key`)
+### API Documentation
+- **Static API Reference**: Detailed documentation of endpoints, parameters, response formats, and error codes is available in [API.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/API.md).
+- **Swagger UI**: `http://localhost:8000/docs` (Once server is running, use the **Authorize** button and enter your `X-API-Key`)
 - **ReDoc**: `http://localhost:8000/redoc`
 
 ---
@@ -84,4 +84,4 @@ For more details, see [DOCKER.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/DOC
 ## ☁️ Deployment
 
 For step-by-step instructions on deploying to **PythonAnywhere** without Docker, see [DEPLOY.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/DEPLOY.md).
-For deploying to containerized environments (Render, AWS, Railway, etc.), see [DOCKER.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/DOCKER.md).
+For deploying to containerized environments (Koyeb, Render, Railway, AWS, etc.), see [DOCKER.md](file:///c:/Users/Prakhar/Desktop/UNO_MINDA/DOCKER.md).
