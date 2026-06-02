@@ -8,10 +8,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Mount cache directory for uv and copy config files to install dependencies
+# Copy configuration files to build environment
+COPY pyproject.toml uv.lock ./
+
+# Mount cache directory for uv and install dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-project --no-dev
 
 # Copy source code files
