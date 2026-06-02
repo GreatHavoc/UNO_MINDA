@@ -1,0 +1,25 @@
+# UNO Minda API Server — Python Dependencies
+# Install with: pip install -r requirements.txt
+#
+# PythonAnywhere: run this in your virtualenv bash console
+
+# Web framework & ASGI server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# HTTP requests & HTML parsing (for news scraping)
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Stock data
+yfinance==0.2.51
+
+# Environment variable management
+python-dotenv==1.0.1
+
+# In-memory TTL caching
+cachetools==5.5.0
+
+# Data processing (used by yfinance)
+pandas==2.2.3

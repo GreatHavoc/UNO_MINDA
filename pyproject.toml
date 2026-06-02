@@ -1,0 +1,21 @@
+[project]
+name = "uno-minda"
+version = "1.0.0"
+description = "UNO Minda Business Intelligence CLI & REST API Server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # CLI dependencies
+    "beautifulsoup4>=4.12.3",
+    "colorama>=0.4.6",
+    "lxml>=5.3.0",
+    "pandas>=2.2.3",
+    "requests>=2.32.3",
+    "rich>=13.0.0",
+    "yfinance>=0.2.51",
+    # API server dependencies
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "python-dotenv>=1.0.1",
+    "cachetools>=5.5.0",
+]

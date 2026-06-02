@@ -1,0 +1,246 @@
+"""
+services.py
+===========
+Data-fetching services: web scraping (DuckDuckGo) and stock data (yfinance).
+All functions return plain Python dicts/lists — no terminal output.
+"""
+
+import urllib.parse
+import logging
+
+import requests
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+# ---------------------------------------------------------------------------
+# News fetching
+# ---------------------------------------------------------------------------
+
+def search_news_direct(topic: str, num: int = 10) -> list[dict]:
+    """
+    Search for news using DuckDuckGo HTML (no API key needed).
+    Returns a list of article dicts with direct URLs.
+    """
+    results: list[dict] = []
+    try:
+        query = f"{topic} latest news"
+        url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
+        resp = requests.get(url, headers=_DEFAULT_HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for r in soup.find_all("div", class_="result", limit=num):
+            title_tag = r.find("a", class_="result__a")
+            snippet_tag = r.find("a", class_="result__snippet")
+            if not title_tag:
+                continue
+
+            ddg_url = title_tag.get("href", "")
+            actual_url = ddg_url
+            if "uddg=" in ddg_url:
+                parsed = urllib.parse.urlparse(ddg_url)
+                params = urllib.parse.parse_qs(parsed.query)
+                if "uddg" in params:
+                    actual_url = urllib.parse.unquote(params["uddg"][0])
+
+            results.append(
+                {
+                    "title": title_tag.get_text(strip=True),
+                    "url": actual_url,
+                    "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
+                    "source": "",
+                    "date": "",
+                }
+            )
+    except requests.exceptions.Timeout:
+        logger.warning("DuckDuckGo search timed out for topic: %s", topic)
+        results.append({"error": "Search timed out"})
+    except requests.exceptions.RequestException as exc:
+        logger.error("DuckDuckGo search failed for topic %s: %s", topic, exc)
+        results.append({"error": f"Search failed: {str(exc)}"})
+    return results
+
+
+def _clean_article_text(text: str) -> str:
+    """Remove excessive whitespace and truncate to 5000 characters."""
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    cleaned = "\n\n".join(lines)
+    if len(cleaned) > 5000:
+        cleaned = cleaned[:5000] + "\n\n... [Article truncated]"
+    return cleaned
+
+
+def fetch_full_article(url: str, timeout: int = 12) -> str:
+    """
+    Attempt to extract the main article text from a URL.
+    Returns the article text, or a bracketed error/status message.
+    """
+    if not url or not url.startswith("http"):
+        return "[Full article unavailable - invalid URL]"
+
+    try:
+        resp = requests.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, allow_redirects=True)
+        resp.raise_for_status()
+
+        content_type = resp.headers.get("Content-Type", "")
+        if any(t in content_type for t in ("pdf", "image", "video")):
+            return "[Full article is a PDF/media file - cannot extract text]"
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup.find_all(
+            ["script", "style", "nav", "footer", "header",
+             "aside", "iframe", "noscript", "form", "button"]
+        ):
+            tag.decompose()
+
+        # Strategy 1: <article> tag
+        article_tag = soup.find("article")
+        if article_tag:
+            text = article_tag.get_text(separator="\n", strip=True)
+            if len(text) > 200:
+                return _clean_article_text(text)
+
+        # Strategy 2: common content class patterns
+        keywords = [
+            "article-content", "article-body", "article__body", "story-content",
+            "story-body", "post-content", "entry-content", "content-body",
+            "main-content", "news-content", "articleBody",
+        ]
+        content_div = soup.find(
+            "div",
+            class_=lambda x: x and any(k in " ".join(x) for k in keywords),
+        )
+        if content_div:
+            text = content_div.get_text(separator="\n", strip=True)
+            if len(text) > 200:
+                return _clean_article_text(text)
+
+        # Strategy 3: div with most <p> children
+        best_div, max_p = None, 0
+        for div in soup.find_all("div"):
+            p_count = len(div.find_all("p", recursive=False))
+            if p_count > max_p:
+                max_p, best_div = p_count, div
+        if best_div and max_p >= 3:
+            text = "\n\n".join(
+                p.get_text(strip=True)
+                for p in best_div.find_all("p")
+                if p.get_text(strip=True)
+            )
+            if len(text) > 200:
+                return _clean_article_text(text)
+
+        # Strategy 4: all <p> tags
+        paragraphs = [
+            p.get_text(strip=True)
+            for p in soup.find_all("p")
+            if len(p.get_text(strip=True)) > 30
+        ]
+        if paragraphs:
+            text = "\n\n".join(paragraphs)
+            if len(text) > 200:
+                return _clean_article_text(text)
+
+        return "[Full article text could not be extracted from this page]"
+
+    except requests.exceptions.Timeout:
+        return "[Full article unavailable - request timed out]"
+    except requests.exceptions.ConnectionError:
+        return "[Full article unavailable - connection error]"
+    except requests.exceptions.HTTPError as exc:
+        return f"[Full article unavailable - HTTP {exc.response.status_code}]"
+    except Exception as exc:
+        logger.error("Article fetch error for %s: %s", url, exc)
+        return f"[Full article unavailable - error: {str(exc)[:80]}]"
+
+
+def fetch_news(topic: str, num: int = 10, fetch_articles: bool = False) -> list[dict]:
+    """
+    Fetch news for a topic. Optionally fetches full article content.
+    Returns a list of article dicts.
+    """
+    raw = search_news_direct(topic, num)
+    results: list[dict] = []
+
+    for item in raw:
+        if "error" in item:
+            results.append(item)
+            continue
+
+        article_url = item.get("url", "")
+        entry = {
+            "title": item.get("title", ""),
+            "url": article_url,
+            "date": item.get("date", ""),
+            "snippet": item.get("snippet", "")[:300],
+            "source": item.get("source", ""),
+        }
+
+        if fetch_articles and article_url:
+            entry["full_article"] = fetch_full_article(article_url)
+
+        results.append(entry)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Stock data
+# ---------------------------------------------------------------------------
+
+def fetch_stock_data(ticker_symbol: str) -> dict:
+    """
+    Fetch stock data for a ticker using yfinance.
+    Returns a dict with key financial metrics.
+    """
+    try:
+        import yfinance as yf
+
+        stock = yf.Ticker(ticker_symbol)
+        info = stock.info
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice", "N/A")
+        prev_close = info.get("previousClose", "N/A")
+        market_cap = info.get("marketCap", "N/A")
+        pe_ratio = info.get("trailingPE", "N/A")
+        revenue = info.get("totalRevenue", "N/A")
+        profit_margin = info.get("profitMargins", "N/A")
+
+        if isinstance(market_cap, (int, float)):
+            market_cap = f"INR {market_cap / 1e7:.0f} Crore"
+        if isinstance(revenue, (int, float)):
+            revenue = f"INR {revenue / 1e7:.0f} Crore"
+
+        return {
+            "ticker": ticker_symbol,
+            "current_price": current_price,
+            "prev_close": prev_close,
+            "market_cap": market_cap,
+            "pe_ratio": pe_ratio,
+            "revenue_ttm": revenue,
+            "profit_margin": (
+                f"{profit_margin * 100:.1f}%"
+                if isinstance(profit_margin, float)
+                else "N/A"
+            ),
+            "52w_high": info.get("fiftyTwoWeekHigh", "N/A"),
+            "52w_low": info.get("fiftyTwoWeekLow", "N/A"),
+        }
+    except Exception as exc:
+        logger.error("Stock fetch error for %s: %s", ticker_symbol, exc)
+        return {"ticker": ticker_symbol, "error": str(exc)}
